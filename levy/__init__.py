@@ -495,6 +495,13 @@ def levy(x, alpha, beta, mu=0.0, sigma=1.0, cdf=False):
         res /= sigma
     return float(res) if np.isscalar(x) else res
 
+def modified_levy(x, alpha, beta, mu=0.0, sigma=1.0, a=0, b=np.inf):
+    if b == np.inf:
+        return levy(x, alpha, beta, mu=mu, sigma=sigma, cdf=False) / 2 / (1 - levy(a, alpha, beta, mu=mu, sigma=sigma, cdf=True))
+    else:
+        return levy(x, alpha, beta, mu=mu, sigma=sigma, cdf=False) / 2 / (levy(b, alpha, beta, mu=mu, sigma=sigma, cdf=True) - levy(a, alpha, beta, mu=mu, sigma=sigma, cdf=True))
+
+
 
 def neglog_levy(x, alpha, beta, mu, sigma):
     """
@@ -524,6 +531,35 @@ def neglog_levy(x, alpha, beta, mu, sigma):
     """
 
     return -np.log(np.maximum(1e-100, levy(x, alpha, beta, mu, sigma)))
+
+def neglog_modified_levy(x, alpha, beta, mu, sigma, a, b):
+    """
+    Interpolate negative log densities of the Levy stable distribution
+    specified by `alpha` and `beta`. Small/negative densities are capped
+    at 1e-100 to preserve sanity.
+
+    It uses parametrization 0 (to get it from another parametrization, convert).
+
+    Example:
+        >>> x = np.array([1,2,3])
+        >>> neglog_levy(x, 1.5, 0.0, 0.0, 1.0)
+        array([1.59929892, 2.47054131, 3.45747366])
+
+    :param x: values where the function is evaluated
+    :type x: :class:`~numpy.ndarray`
+    :param alpha: alpha
+    :type alpha: float
+    :param beta: beta
+    :type beta: float
+    :param mu: mu
+    :type mu: float
+    :param sigma: sigma
+    :type sigma: float
+    :return: values of -log(pdf(x))
+    :rtype: :class:`~numpy.ndarray`
+    """
+
+    return -np.log(np.maximum(1e-100, modified_levy(x, alpha, beta, mu, sigma, a, b)))
 
 
 def fit_levy(x, par='0', **kwargs):
@@ -576,6 +612,55 @@ def fit_levy(x, par='0', **kwargs):
 
     return parameters, neglog_density(parameters.x)
 
+def fit_modified_levy(x, a=0, b=np.inf, par='0', **kwargs):
+    """
+    Estimate parameters of Levy stable distribution given data x, using
+    Maximum Likelihood estimation.
+
+    By default, searches all possible Levy stable distributions. However
+    you may restrict the search by specifying the values of one or more
+    parameters. Notice that the parameters to be fixed can be chosen in
+    all the available parametrizations {0, 1, A, B, M}.
+
+    Examples:
+        >>> np.random.seed(0)
+        >>> x = random(1.5, 0, 0, 1, shape=(200,))
+        >>> fit_levy(x) # -- Fit a stable distribution to x
+        (par=0, alpha=1.52, beta=-0.08, mu=0.05, sigma=0.99, 402.37150603509247)
+
+        >>> fit_levy(x, beta=0.0) # -- Fit a symmetric stable distribution to x
+        (par=0, alpha=1.53, beta=0.00, mu=0.03, sigma=0.99, 402.43833088693725)
+
+        >>> fit_levy(x, beta=0.0, mu=0.0) # -- Fit a symmetric distribution centered on zero to x
+        (par=0, alpha=1.53, beta=0.00, mu=0.00, sigma=0.99, 402.4736618823546)
+
+        >>> fit_levy(x, alpha=1.0, beta=0.0) # -- Fit a Cauchy distribution to x
+        (par=0, alpha=1.00, beta=0.00, mu=0.10, sigma=0.90, 416.54249079255976)
+
+    :param x: values to be fitted
+    :type x: :class:`~numpy.ndarray`
+    :param par: parametrization
+    :type par: str
+    :return: a tuple with a `Parameters` object and the negative log likelihood of the data.
+    :rtype: tuple
+    """
+
+    values = {par_name: None if par_name not in kwargs else kwargs[par_name] for i, par_name in
+              enumerate(par_names[par])}
+
+    parameters = Parameters(par=par, **values)
+    temp = Parameters(par=par, **values)
+
+    def neglog_density(param):
+        temp.x = param
+        alpha, beta, mu, sigma = temp.get('0')
+        return np.sum(neglog_modified_levy(x, alpha, beta, mu, sigma, a, b))
+
+    bounds = tuple(par_bounds[i] for i in parameters.variables)
+    res = optimize.minimize(neglog_density, parameters.x, method='L-BFGS-B', bounds=bounds)
+    parameters.x = res.x
+
+    return parameters, neglog_density(parameters.x)
 
 def random(alpha, beta, mu=0.0, sigma=1.0, shape=()):
     """

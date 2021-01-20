@@ -64,3 +64,6 @@ target/
 # pycharm
 ./idea
 .idea/*
+
+# vs code worksapce
+*.code-workspace
